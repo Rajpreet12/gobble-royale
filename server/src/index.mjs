@@ -9,6 +9,7 @@
 //   WS   /play             { t: "hello", name, state } then { t: "in", x, y, d } and { t: "pong", n }
 
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,8 +26,12 @@ const PORT = Number(process.env.PORT) || 8080;
 const MAX_PER_IP = Number(process.env.MAX_PER_IP) || 4;
 const MAX_MESSAGES_PER_SECOND = 40; // the page sends about 20
 const RTT_EVERY_MS = 2_000;
-const PUBLIC = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const PUBLIC = join(ROOT, "public");
 const STARTED = Date.now();
+// The git commit this server is running, written into the bundle by the deploy pipeline. /health
+// reports it, so a deploy can prove the new code is live instead of assuming it.
+const VERSION = (() => { try { return readFileSync(join(ROOT, "VERSION"), "utf8").trim(); } catch { return "dev"; } })();
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png" };
 const FILES = ["index.html", "game.js", "status.html"];
@@ -87,6 +92,7 @@ function status() {
   if (statusCache && Date.now() - statusCache.at < 2_000) return statusCache.body;
   const body = {
     now: Date.now(),
+    version: VERSION,
     uptimeSeconds: Math.round((Date.now() - STARTED) / 1000),
     online: online(),
     rooms: rooms.length,
@@ -106,7 +112,7 @@ const server = createServer(async (req, res) => {
   res.on("finish", () => timer.observe(performance.now() - start));
 
   if (req.method !== "GET") return sendJson(res, 405, { error: "GET only" });
-  if (path === "/health") return sendJson(res, 200, { ok: true, online: online() });
+  if (path === "/health") return sendJson(res, 200, { ok: true, online: online(), version: VERSION });
   if (path === "/metrics") {
     res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
     return res.end(renderPrometheus());

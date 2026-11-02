@@ -1,0 +1,99 @@
+# CI: every push and pull request must pass all of this before it can reach players.
+# Each job exists because something went wrong without it (see docs/postmortems/).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - name: Game rules and metrics
+        run: npm test
+        working-directory: server
+      - name: Alert rules (simulated outages)
+        run: node --test uptime/test/alerts.test.mjs
+
+  lint:
+    name: Scripts, templates and web server config
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Postmortem 2026-10-30: a bash-only line in a script Lightsail runs with sh broke the
+      # first boot. `sh -n` doesn't catch that; ShellCheck in sh mode does.
+      - name: ShellCheck the Lightsail setup script as plain sh
+        run: shellcheck -s sh infra/lightsail-setup.sh
+      - name: ShellCheck the other scripts
+        run: shellcheck update-lightsail.sh deploy.sh scripts/*.sh
+
+      - name: Lint CloudFormation and SAM templates
+        run: |
+          pip install --quiet cfn-lint
+          cfn-lint uptime/template.yaml infra/template.yaml infra/github-deploy-role.yaml
+
+      # Game day 2026-11-02: the first friendly-error-page config used syntax the server's Caddy
+      # (2.6.2, from Ubuntu 24.04) doesn't support. Validate with the SAME version production runs.
+      - name: Validate the Caddyfile with production's Caddy version
+        env:
+          CADDY_VERSION: 2.6.2
+        run: |
+          base="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}"
+          curl -fsSLO "$base/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "$base/caddy_${CADDY_VERSION}_checksums.txt" | grep " caddy_${CADDY_VERSION}_linux_amd64.tar.gz$" | sha512sum -c -
+          tar -xzf "caddy_${CADDY_VERSION}_linux_amd64.tar.gz" caddy
+          sed 's/__HOST__/ci.example.com/' infra/Caddyfile > Caddyfile.ci
+          ./caddy validate --config Caddyfile.ci --adapter caddyfile
+
+  performance:
+    name: Load test (SLO gate)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+        working-directory: server
+      - name: Start a throwaway game server
+        working-directory: server
+        run: |
+          PORT=8090 MAX_PER_IP=500 node src/index.mjs > server.log 2>&1 &
+          for i in $(seq 1 20); do curl -sf localhost:8090/health && exit 0; sleep 0.5; done
+          cat server.log; exit 1
+      # 60 fake players for 30 s. Exits 1 if any SLO is missed, which fails this job and blocks
+      # the deploy: a change that makes the game slower never reaches players.
+      - name: Load test with 60 players
+        working-directory: server
+        run: |
+          set -o pipefail
+          node scripts/loadtest.mjs --url http://localhost:8090 --players 60 --seconds 30 | tee loadtest.txt
+      - name: Publish the results
+        if: always()
+        working-directory: server
+        run: |
+          { echo '## Load test'; echo '```'; cat loadtest.txt 2>/dev/null || echo "no results"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

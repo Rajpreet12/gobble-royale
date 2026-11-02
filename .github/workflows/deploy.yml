@@ -1,0 +1,85 @@
+# Deploy: when CI passes on main, ship to the Lightsail server, prove it's live, roll back if not.
+# Run it by hand (Actions > Deploy > Run workflow) to redeploy, or with "emergency" to skip the gate.
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      emergency:
+        description: Skip the deploy gate (low error budget or a freeze). For urgent fixes only.
+        type: boolean
+        default: false
+      reason:
+        description: Why it can't wait (required for an emergency deploy)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  id-token: write # lets GitHub prove to AWS who it is (OIDC), so no AWS keys are stored here
+
+# One deploy at a time, and never cancel one halfway through.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  HOST: gobble.98-88-244-8.sslip.io
+  BUDGET_URL: https://i32t6oxkiufd3b7cziawfzfrsy0bkpyp.lambda-url.us-east-1.on.aws/
+
+jobs:
+  deploy:
+    # Only after a green CI run (or by hand)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deploy exactly the commit CI tested, not whatever main is by now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Docs-only changes don't need a restart (each restart costs a couple of seconds of downtime).
+      - name: Anything to deploy?
+        id: changes
+        run: |
+          sha="$(git rev-parse HEAD)"
+          live="$(curl -fsS "https://$HOST/health" | jq -r '.version // "unknown"' || echo unknown)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if git cat-file -e "${live}^{commit}" 2>/dev/null && git diff --quiet "$live" "$sha" -- server/ infra/Caddyfile; then
+            echo "Live version $live already has everything in server/ and infra/Caddyfile. Nothing to deploy."
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Live: $live -> deploying $sha"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy gate (error budget and freeze windows)
+        if: steps.changes.outputs.deploy == 'true'
+        env:
+          EMERGENCY: ${{ inputs.emergency || false }}
+          REASON: ${{ inputs.reason }}
+        run: node scripts/deploy-gate.mjs
+
+      - name: Get short-lived AWS credentials
+        if: steps.changes.outputs.deploy == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::903584666644:role/gobble-royale-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy, smoke test, roll back on failure
+        if: steps.changes.outputs.deploy == 'true'
+        env:
+          VERSION: ${{ steps.changes.outputs.sha }}
+        run: bash scripts/deploy-lightsail-ci.sh

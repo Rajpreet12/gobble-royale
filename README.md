@@ -25,6 +25,7 @@ The address comes from [sslip.io](https://sslip.io), a free DNS service that map
 - **Uptime from outside:** [`uptime/`](uptime/) is a Lambda that checks every minute whether a player could load the page and open the game connection. The status page shows 30-day availability, the error budget, and burn rate. Deploy with `cd uptime && sam deploy`. Cost: about $0.15 a month (often $0 on the free tier).
 - **Alerts:** the same checker emails a **[PAGE]** when the error budget burns fast (a real outage), and a **[TICKET]** for a slow leak, a latency SLO missed for 10 minutes, or the checker itself breaking. Rules and tests are in `uptime/src/alerts.mjs` and `uptime/test/`. Run the tests with `node --test uptime/test/alerts.test.mjs`.
 - **The SLOs, error budget policy and alert rules:** [docs/SLO.md](docs/SLO.md).
+- **Shipping:** push to `main`. CI runs tests, linters and a load test that blocks slow changes; then the deploy checks the error budget, ships, smoke-tests, and rolls back by itself if needed. See [docs/CI-CD.md](docs/CI-CD.md).
 - **On call:** the [runbook](docs/RUNBOOK.md) has what to do for each alert, plus [postmortems](docs/postmortems/) and a [game day](docs/gameday-2026-11-02.md) that tested all of it with a planned outage.
 - What's measured, how, and what it found: [docs/observability.md](docs/observability.md).
 

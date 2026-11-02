@@ -73,10 +73,10 @@ systemctl daemon-reload
 systemctl enable gobble
 /usr/local/bin/gobble-update "$SOURCE_URL"
 
-# Same as infra/Caddyfile. The quoted 'EOF' keeps the shell from touching the backticks in it;
-# __HOST__ was already replaced when this script was filled in.
+# Same as infra/Caddyfile. The quoted 'EOF' keeps the shell from touching the backticks in it,
+# so the host name goes in afterwards with sed.
 cat > /etc/caddy/Caddyfile <<'EOF'
-__HOST__ {
+@HOST@ {
 	encode gzip
 	reverse_proxy 127.0.0.1:8080
 
@@ -93,6 +93,7 @@ __HOST__ {
 	}
 }
 EOF
+sed -i "s/@HOST@/$HOST/" /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 systemctl enable caddy
 systemctl restart caddy
