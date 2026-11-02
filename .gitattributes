@@ -1,0 +1,6 @@
+# Linux line endings everywhere, even on a Windows checkout. A shell script with Windows line
+# endings (CRLF) fails on Linux with "$'\r': command not found", and the Lightsail setup script
+# runs under sh on Ubuntu. Same family of bug as postmortems/2026-10-30-first-boot-did-nothing.md.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
