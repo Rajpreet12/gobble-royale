@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Gobble Royale uptime - checks the game from outside every minute and serves the error budget.
+
+Parameters:
+  TargetUrl:
+    Type: String
+    Default: https://gobble.98-88-244-8.sslip.io
+  SloPercent:
+    Type: Number
+    Default: 99.5
+    Description: Share of minutes in 30 days that must be good
+  AllowedOrigin:
+    Type: String
+    Default: https://gobble.98-88-244-8.sslip.io
+    Description: The site allowed to read the budget from a browser (the status page)
+  AlertEmail:
+    Type: String
+    Description: Who gets PAGE and TICKET alerts. AWS emails a confirmation link first; alerts start once it's clicked.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    MemorySize: 128
+    Timeout: 20
+    CodeUri: .
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref UptimeTable
+        TARGET_URL: !Ref TargetUrl
+        SLO_PERCENT: !Ref SloPercent
+
+Resources:
+  # pk HOUR / sk 2026-11-02T14 : total and good minutes in that hour
+  # pk BAD  / sk <timestamp>   : one row per bad minute, with the reason
+  # Rows delete themselves after 35 days (TTL).
+  UptimeTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+
+  # Where alerts go. Email for now; a phone app or chat could subscribe to the same topic later.
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Gobble Royale alerts
+
+  AlertEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  ProbeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/uptime.probe
+      Description: Checks the game every minute, like a player would, then decides on alerts
+      Environment:
+        Variables:
+          ALERT_TOPIC_ARN: !Ref AlertTopic
+          BUDGET_URL: !GetAtt BudgetFunctionUrl.FunctionUrl # alert emails link here: it works when the game is down
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:UpdateItem, dynamodb:PutItem, dynamodb:GetItem, dynamodb:Query]
+              Resource: !GetAtt UptimeTable.Arn
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref AlertTopic
+      Events:
+        EveryMinute:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 minute)
+
+  # Read-only, public: the status page in any visitor's browser fetches it.
+  BudgetFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: src/uptime.budget
+      Description: Availability, error budget and burn rate for the status page
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt UptimeTable.Arn
+      FunctionUrlConfig:
+        AuthType: NONE
+        Cors:
+          AllowOrigins: [!Ref AllowedOrigin, "http://localhost:8080"]
+          AllowMethods: [GET]
+
+  # --- Who watches the watcher? ---
+  # If the checker stops running or keeps crashing, no outage alert could ever fire. CloudWatch
+  # watches it from outside, so a broken checker is itself an alert.
+  CheckerStoppedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: gobble-royale-uptime-checker-stopped
+      AlarmDescription: >-
+        TICKET: The uptime checker hasn't run for 10 minutes, so outages would go unnoticed.
+        Check the EventBridge schedule and the ProbeFunction in the Lambda console.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions: [{ Name: FunctionName, Value: !Ref ProbeFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching # no data at all means it isn't running: that's the point
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  CheckerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: gobble-royale-uptime-checker-errors
+      AlarmDescription: >-
+        TICKET: The uptime checker is failing (errors in 2 of the last 3 five-minute periods),
+        so alerts may not be sent. Read its logs: Lambda console > ProbeFunction > Monitor > Logs.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref ProbeFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 3
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+Outputs:
+  AlertTopicArn:
+    Value: !Ref AlertTopic
+  BudgetUrl:
+    Description: Put this in server/public/status.html (meta name="uptime-api")
+    Value: !GetAtt BudgetFunctionUrl.FunctionUrl
+  ProbeFunctionName:
+    Value: !Ref ProbeFunction

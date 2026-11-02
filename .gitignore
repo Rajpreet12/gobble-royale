@@ -1,0 +1,10 @@
+node_modules/
+.aws-sam/
+*.zip
+*.log
+.env
+.env.*
+
+# Holds the alert email address: personal, so it stays on your machine.
+# Copy uptime/samconfig.example.toml to start one.
+uptime/samconfig.toml

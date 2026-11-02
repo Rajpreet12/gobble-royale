@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gobble Royale Status</title>
+  <meta name="description" content="Live health of the Gobble Royale game server: SLOs, p50/p95/p99 latency, and the last hour." />
+  <!-- The uptime checker runs outside the game server (AWS Lambda); see uptime/ and docs/SLO.md -->
+  <meta name="uptime-api" content="https://i32t6oxkiufd3b7cziawfzfrsy0bkpyp.lambda-url.us-east-1.on.aws/" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #2b1a0e;
+      --panel: #3a2414;
+      --inset: #24160b;
+      --edge: #5a3a20;
+      --text: #fff3e0;
+      --muted: #d1b393;
+      --accent: #ff8a2a;
+      --gold: #ffc94a;
+      --good: #6fdc5a;
+      --bad: #ff6b7d;
+      --grid: rgba(209, 179, 147, .18);
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; }
+    body { background: var(--bg); color: var(--text); font-family: "Nunito", system-ui, sans-serif; font-size: 16px; line-height: 1.5; }
+    main { max-width: 1000px; margin: 0 auto; padding: 18px 16px 48px; }
+    a { color: var(--accent); }
+    h1, h2 { font-family: "Lilita One", "Nunito", sans-serif; font-weight: 400; letter-spacing: .4px; margin: 0; }
+    h1 { font-size: clamp(1.6rem, 5vw, 2.3rem); color: var(--accent); }
+    h2 { font-size: 1.35rem; color: var(--gold); margin-bottom: 8px; }
+    .top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .updated { color: var(--muted); font-size: .85rem; font-weight: 700; }
+    .panel { background: var(--panel); border: 2px solid var(--edge); border-radius: 16px; padding: 16px; margin-top: 16px; }
+
+    .overall { display: flex; align-items: center; gap: 12px; font-weight: 800; font-size: 1.1rem; }
+    .overall .icon { font-size: 1.8rem; }
+    .overall small { display: block; font-weight: 700; color: var(--muted); font-size: .85rem; }
+
+    .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .tile { background: var(--inset); border-radius: 12px; padding: 10px; }
+    .tile .num { display: block; font-size: 1.7rem; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; }
+    .tile .label { color: var(--muted); font-size: .8rem; font-weight: 700; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+    th, td { padding: 8px 6px; text-align: right; border-bottom: 1px solid var(--edge); white-space: nowrap; }
+    th:first-child, td:first-child { text-align: left; white-space: normal; }
+    th { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: 1px; }
+    td .hl { color: var(--gold); font-weight: 800; }
+    .pill { display: inline-block; border-radius: 999px; padding: 1px 10px; font-weight: 800; font-size: .8rem; background: var(--inset); }
+    .pill.good { color: var(--good); }
+    .pill.bad { color: var(--bad); }
+    .pill.none { color: var(--muted); }
+
+    .charts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .chart { background: var(--inset); border-radius: 12px; padding: 12px; position: relative; }
+    .chart h3 { margin: 0; font-size: 1rem; }
+    .chart .sub { color: var(--muted); font-size: .8rem; font-weight: 700; margin: 2px 0 6px; }
+    .chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+    .chart .why { color: var(--muted); font-size: .82rem; margin: 6px 0 0; }
+    .tip { position: absolute; pointer-events: none; background: #120a04; border: 1px solid var(--edge); border-radius: 8px; padding: 4px 8px; font-size: .8rem; font-weight: 700; white-space: nowrap; transform: translate(-50%, -110%); }
+
+    /* Availability and error budget */
+    .avail { display: grid; grid-template-columns: 1.1fr 1.4fr 1fr; gap: 14px; align-items: start; }
+    .hero { font-size: 2.6rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .muted { color: var(--muted); font-size: .85rem; font-weight: 700; }
+    .meter { height: 14px; border-radius: 999px; background: rgba(209, 179, 147, .18); overflow: hidden; margin: 8px 0 6px; }
+    .meter > div { height: 100%; border-radius: 999px; transition: width .4s; }
+    .tier-good { --tier: var(--good); }
+    .tier-warn { --tier: var(--gold); }
+    .tier-bad { --tier: var(--bad); }
+    .meter > div { background: var(--tier); }
+    .tier-label { font-weight: 800; color: var(--tier); }
+    .burn { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-variant-numeric: tabular-nums; }
+    .burn b { text-align: right; }
+    .strip { display: grid; grid-template-columns: repeat(48, 1fr); gap: 2px; margin-top: 14px; position: relative; }
+    .strip div { height: 28px; border-radius: 4px; background: var(--edge); }
+    .strip .ok { background: var(--good); }
+    .strip .bad { background: var(--bad); }
+    .strip-axis { display: flex; justify-content: space-between; margin-top: 4px; }
+    .incidents { margin: 10px 0 0; padding-left: 18px; font-size: .88rem; }
+    #uptime-panel { position: relative; }
+    .uptime-tip { transform: translate(-50%, -115%); }
+    @media (max-width: 720px) { .avail { grid-template-columns: 1fr; } .strip div { height: 22px; } }
+
+    details { margin-top: 6px; }
+    summary { cursor: pointer; font-weight: 800; color: var(--gold); }
+    .learn p, .learn li { color: var(--text); }
+    .learn code { background: var(--inset); padding: 1px 6px; border-radius: 6px; }
+    footer { text-align: center; color: var(--muted); font-size: .85rem; margin-top: 24px; }
+
+    @media (max-width: 720px) {
+      .tiles { grid-template-columns: repeat(2, 1fr); }
+      .charts { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="top">
+      <h1>📈 Gobble Royale status</h1>
+      <span class="updated" id="updated" role="status">Loading...</span>
+    </div>
+
+    <section class="panel">
+      <div class="overall" id="overall"><span class="icon">⏳</span><span>Checking...</span></div>
+    </section>
+
+    <section class="panel" id="uptime-panel">
+      <h2>Availability (30 days)</h2>
+      <div class="avail">
+        <div>
+          <div class="hero" id="u-avail">–</div>
+          <div class="muted" id="u-target">Target 99.5% of minutes</div>
+          <div style="margin-top:6px" id="u-pill"></div>
+        </div>
+        <div>
+          <div class="muted">Error budget left</div>
+          <div class="meter" role="meter" aria-label="Error budget left" aria-valuemin="0" aria-valuemax="100" id="u-meter"><div id="u-meter-fill" style="width:0"></div></div>
+          <div id="u-budget">–</div>
+          <div class="muted" id="u-policy"></div>
+        </div>
+        <div>
+          <div class="muted">Burn rate (1× = on pace to use the budget in 30 days)</div>
+          <div class="burn" id="u-burn"></div>
+        </div>
+      </div>
+      <div class="strip" id="u-strip" aria-label="Last 48 hours, one block per hour"></div>
+      <div class="strip-axis muted"><span>48 hours ago</span><span>now</span></div>
+      <div class="tip uptime-tip" id="u-tip" hidden></div>
+      <div id="u-incidents"></div>
+      <p class="muted" id="u-note" style="margin:10px 0 0">Checked every minute from outside the game server by AWS Lambda: can a player load the page and open the game connection?</p>
+    </section>
+
+    <section class="panel">
+      <div class="tiles">
+        <div class="tile"><span class="num" id="t-online">–</span><span class="label">🦃 players online</span></div>
+        <div class="tile"><span class="num" id="t-uptime">–</span><span class="label">⏱ uptime</span></div>
+        <div class="tile"><span class="num" id="t-mem">–</span><span class="label">🧠 memory used</span></div>
+        <div class="tile"><span class="num" id="t-busy">–</span><span class="label">⚙️ event loop busy</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Service level objectives (last 5 minutes)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Indicator</th><th>Target</th><th>p50</th><th>p95</th><th>p99</th><th>Samples</th><th>Status</th></tr></thead>
+          <tbody id="slo-rows"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Last hour</h2>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <section class="panel learn">
+      <h2>What these numbers mean</h2>
+      <details>
+        <summary>p50, p95, p99</summary>
+        <p>Sort every measurement from fastest to slowest. <b>p50</b> is the one in the middle: half were faster. <b>p95</b> is 95% of the way along: only the slowest 1 in 20 were worse. <b>p99</b>: only the slowest 1 in 100 were worse.</p>
+        <p>Why not the average? If 99 ticks take 1 ms and one takes 200 ms, the average is about 3 ms and looks healthy, but the p99 shows the 200 ms freeze that every player felt.</p>
+      </details>
+      <details>
+        <summary>SLI, SLO, SLA and error budgets</summary>
+        <ul>
+          <li><b>SLI</b> (indicator): what we measure, like <code>p99 tick time</code>.</li>
+          <li><b>SLO</b> (objective): the target we hold ourselves to, like <code>under 10 ms</code>.</li>
+          <li><b>SLA</b> (agreement): a promise to customers with a penalty if it's broken. A free game doesn't have one.</li>
+          <li><b>Error budget</b>: how much failure the SLO allows. 99.5% uptime over 30 days allows 3.6 hours of downtime. Spend it on risky changes; if it runs out, stop and fix reliability.</li>
+        </ul>
+      </details>
+      <details>
+        <summary>How it's measured</summary>
+        <p>The server times each tick and each request itself, and times each player's round trip by sending a ping every 2 seconds and timing the reply. The table uses the last 5 minutes; each chart point is one 30-second slice. Times are only recorded while someone is playing, so an idle server can't make the numbers look better than any player felt.</p>
+        <p>Raw numbers for monitoring tools are at <a href="/metrics">/metrics</a> in Prometheus format.</p>
+      </details>
+    </section>
+
+    <footer><a href="/">← Back to the game</a> · Refreshes every 5 seconds</footer>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const fmtMs = (v) => (v == null ? "–" : v < 10 ? `${v.toFixed(2)} ms` : `${Math.round(v)} ms`);
+      const fmtUptime = (s) => (s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`);
+      const el = (tag, attrs = {}, text) => {
+        const e = document.createElementNS(tag === "svg" || attrs.svg ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml", tag);
+        for (const [k, v] of Object.entries(attrs)) if (k !== "svg") e.setAttribute(k, v);
+        if (text != null) e.textContent = text;
+        return e;
+      };
+      let last = null;
+
+      function statusPill(met) {
+        const span = document.createElement("span");
+        span.className = `pill ${met === null ? "none" : met ? "good" : "bad"}`;
+        span.textContent = met === null ? "⏸ No data" : met ? "✅ Meeting" : "❌ Missing";
+        return span;
+      }
+
+      function render(s) {
+        last = s;
+        $("updated").textContent = `Updated ${new Date(s.now).toLocaleTimeString()}`;
+        $("t-online").textContent = s.online;
+        $("t-uptime").textContent = fmtUptime(s.uptimeSeconds);
+        $("t-mem").textContent = `${s.memoryMb} MB`;
+        $("t-busy").textContent = `${s.eventLoopBusy}%`;
+
+        const missing = s.slos.filter((x) => x.met === false);
+        const noData = s.slos.every((x) => x.met === null);
+        const overall = $("overall");
+        overall.replaceChildren();
+        const [icon, title, sub] = noData
+          ? ["⏸", "No data yet", "Nobody has played in the last 5 minutes, so there's nothing to measure. Join a game and come back."]
+          : missing.length
+            ? ["❌", `${missing.length} SLO${missing.length > 1 ? "s" : ""} missing: ${missing.map((m) => m.name).join(", ")}`, "Players are feeling it. Check the charts below for when it started."]
+            : ["✅", "All SLOs met", `${s.online} player${s.online === 1 ? "" : "s"} online. The game is fast and smooth.`];
+        const text = document.createElement("span");
+        text.textContent = title;
+        const small = document.createElement("small");
+        small.textContent = sub;
+        text.appendChild(small);
+        overall.append(el("span", { class: "icon" }, icon), text);
+
+        const rows = $("slo-rows");
+        rows.replaceChildren();
+        for (const x of s.slos) {
+          const tr = document.createElement("tr");
+          const name = document.createElement("td");
+          name.textContent = x.name;
+          tr.appendChild(name);
+          tr.appendChild(el("td", {}, `${x.percentile} < ${x.targetMs} ms`));
+          for (const p of ["p50", "p95", "p99"]) {
+            const td = document.createElement("td");
+            const span = document.createElement("span");
+            if (p === x.percentile) span.className = "hl"; // the percentile the SLO is judged on
+            span.textContent = fmtMs(x[p]);
+            td.appendChild(span);
+            tr.appendChild(td);
+          }
+          tr.appendChild(el("td", {}, x.samples.toLocaleString()));
+          const st = document.createElement("td");
+          st.appendChild(statusPill(x.met));
+          tr.appendChild(st);
+          rows.appendChild(tr);
+        }
+        renderCharts(s.slos);
+      }
+
+      // One small chart per indicator: the judged percentile over the last hour, against its target.
+      function renderCharts(slos) {
+        const box = $("charts");
+        box.replaceChildren();
+        for (const x of slos) {
+          const card = el("div", { class: "chart" });
+          card.appendChild(el("h3", {}, x.name));
+          card.appendChild(el("div", { class: "sub" }, `${x.percentile} per 30 seconds · target under ${x.targetMs} ms`));
+          const svg = el("svg", { role: "img", "aria-label": `${x.name}, ${x.percentile} over the last hour` });
+          card.appendChild(svg);
+          card.appendChild(el("p", { class: "why" }, x.why));
+          const tip = el("div", { class: "tip", hidden: "" });
+          card.appendChild(tip);
+          box.appendChild(card);
+          drawChart(svg, tip, x);
+        }
+      }
+
+      function drawChart(svg, tip, x) {
+        const W = svg.clientWidth || 400, H = 150, L = 44, R = 8, T = 10, B = 22;
+        svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+        const pts = x.history;
+        const end = Date.now(), start = end - 60 * 60_000;
+        const maxV = Math.max(x.targetMs * 1.4, ...pts.map((p) => p.v ?? 0));
+        const sx = (t) => L + ((t - start) / (end - start)) * (W - L - R);
+        const sy = (v) => T + (1 - v / maxV) * (H - T - B);
+        const g = (attrs) => el("g", { svg: 1, ...attrs });
+
+        // Recessive grid and axis labels
+        const grid = g({});
+        for (const v of [0, maxV / 2, maxV]) {
+          grid.appendChild(el("line", { svg: 1, x1: L, x2: W - R, y1: sy(v), y2: sy(v), stroke: "var(--grid)", "stroke-width": 1 }));
+          grid.appendChild(el("text", { svg: 1, x: L - 6, y: sy(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 }, `${Math.round(v)}`));
+        }
+        grid.appendChild(el("text", { svg: 1, x: L, y: H - 4, fill: "var(--muted)", "font-size": 11 }, "60 min ago"));
+        grid.appendChild(el("text", { svg: 1, x: W - R, y: H - 4, "text-anchor": "end", fill: "var(--muted)", "font-size": 11 }, "now"));
+        svg.appendChild(grid);
+
+        // The target, dashed and labelled
+        svg.appendChild(el("line", { svg: 1, x1: L, x2: W - R, y1: sy(x.targetMs), y2: sy(x.targetMs), stroke: "var(--muted)", "stroke-width": 1.5, "stroke-dasharray": "5 4" }));
+        svg.appendChild(el("text", { svg: 1, x: W - R, y: sy(x.targetMs) - 5, "text-anchor": "end", fill: "var(--muted)", "font-size": 11, "font-weight": 700 }, `target ${x.targetMs} ms`));
+
+        // The measured line. Gaps (nobody playing) break the line instead of pretending to be zero.
+        let d = "";
+        let pen = false;
+        for (const p of pts) {
+          if (p.v == null) { pen = false; continue; }
+          d += `${pen ? "L" : "M"}${sx(p.t).toFixed(1)},${sy(p.v).toFixed(1)}`;
+          pen = true;
+        }
+        if (d) svg.appendChild(el("path", { svg: 1, d, fill: "none", stroke: "var(--accent)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+        // A point with no neighbour has no line to sit on, so give it a marker of its own.
+        pts.forEach((p, i) => {
+          if (p.v == null || pts[i - 1]?.v != null || pts[i + 1]?.v != null) return;
+          svg.appendChild(el("circle", { svg: 1, cx: sx(p.t), cy: sy(p.v), r: 4, fill: "var(--accent)" }));
+        });
+        if (!d) svg.appendChild(el("text", { svg: 1, x: (L + W - R) / 2, y: H / 2, "text-anchor": "middle", fill: "var(--muted)", "font-size": 13 }, "No data yet. Points appear every 30 seconds while people play."));
+
+        // Hover: a crosshair and the nearest point's value
+        const cross = el("line", { svg: 1, y1: T, y2: H - B, stroke: "var(--muted)", "stroke-width": 1, visibility: "hidden" });
+        const dot = el("circle", { svg: 1, r: 4, fill: "var(--accent)", stroke: "var(--inset)", "stroke-width": 2, visibility: "hidden" });
+        svg.append(cross, dot);
+        const hit = el("rect", { svg: 1, x: L, y: 0, width: W - L - R, height: H, fill: "transparent" });
+        svg.appendChild(hit);
+        const valid = pts.filter((p) => p.v != null);
+        hit.addEventListener("pointermove", (e) => {
+          if (!valid.length) return;
+          const box = svg.getBoundingClientRect();
+          const px = ((e.clientX - box.left) / box.width) * W;
+          const near = valid.reduce((a, b) => (Math.abs(sx(b.t) - px) < Math.abs(sx(a.t) - px) ? b : a));
+          const cx = sx(near.t), cy = sy(near.v);
+          cross.setAttribute("x1", cx); cross.setAttribute("x2", cx); cross.setAttribute("visibility", "visible");
+          dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.setAttribute("visibility", "visible");
+          tip.hidden = false;
+          tip.textContent = `${new Date(near.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${x.percentile} ${fmtMs(near.v)} · ${near.n} samples`;
+          // Keep the tooltip inside the card: on the right half it opens to the left of the point.
+          const right = cx > W * 0.55;
+          tip.style.left = `${(cx / W) * box.width + 12 + (right ? -24 : 0)}px`;
+          tip.style.top = `${(cy / H) * box.height + 46}px`;
+          tip.style.transform = right ? "translate(-100%, -110%)" : "translate(0, -110%)";
+        });
+        hit.addEventListener("pointerleave", () => {
+          cross.setAttribute("visibility", "hidden");
+          dot.setAttribute("visibility", "hidden");
+          tip.hidden = true;
+        });
+      }
+
+      // --- Availability, from the outside checker ---
+      const UPTIME_API = document.querySelector('meta[name="uptime-api"]')?.content;
+
+      // The same tiers as the error budget policy in docs/SLO.md
+      function tier(left) {
+        if (left > 50) return ["tier-good", "✅ Healthy", "Ship freely."];
+        if (left > 25) return ["tier-warn", "⚠️ Spending fast", "Deploy only in quiet hours, with a rollback ready."];
+        if (left > 0) return ["tier-bad", "🛑 At risk", "No new features: reliability fixes only."];
+        return ["tier-bad", "🛑 Used up", "Feature freeze until the 30-day window recovers."];
+      }
+
+      function renderUptime(u) {
+        $("u-avail").textContent = u.availability == null ? "–" : `${u.availability}%`;
+        const since = u.dataSince ? new Date(u.dataSince) : null;
+        const days = since ? (Date.now() - since) / 86_400_000 : 0;
+        $("u-target").textContent = `Target ${u.slo}% of minutes · ${u.minutesChecked.toLocaleString()} minutes checked${days < u.windowDays && since ? ` since ${since.toLocaleDateString()}` : ""}`;
+        const pill = $("u-pill");
+        pill.replaceChildren(statusPill(u.availability == null ? null : u.availability >= u.slo));
+
+        const [cls, label, action] = tier(u.budgetLeftPercent);
+        $("uptime-panel").className = `panel ${cls}`;
+        $("u-meter-fill").style.width = `${Math.max(0, Math.min(100, u.budgetLeftPercent))}%`;
+        $("u-meter").setAttribute("aria-valuenow", String(u.budgetLeftPercent));
+        const budget = $("u-budget");
+        budget.replaceChildren();
+        const strong = el("span", { class: "tier-label" }, `${label} · ${u.budgetLeftPercent}%`);
+        budget.append(strong, document.createTextNode(` (${Math.max(0, u.budgetLeftMinutes)} of ${u.budgetMinutes} minutes left)`));
+        $("u-policy").textContent = action;
+
+        const burn = $("u-burn");
+        burn.replaceChildren();
+        for (const [name, v, alertAt] of [["Last hour", u.burnRate1h, 14.4], ["Last 6 hours", u.burnRate6h, 6]]) {
+          burn.append(el("span", {}, name), el("b", {}, `${v}× ${v >= alertAt ? "🚨" : v >= 1 ? "⚠️" : "✅"}`));
+        }
+        burn.append(el("span", { class: "muted", style: "grid-column: 1 / -1" }, "Alerts at 14.4× for an hour, or 6× for 6 hours"));
+
+        // 48 hourly blocks: green = every check passed, red = at least one bad minute, brown = no checks yet
+        const strip = $("u-strip");
+        strip.replaceChildren();
+        for (const h of u.last48) {
+          const bad = h.total - h.good;
+          const block = el("div", { class: h.total === 0 ? "" : bad ? "bad" : "ok" });
+          const when = new Date(`${h.hour}:00:00Z`).toLocaleString([], { weekday: "short", hour: "numeric" });
+          const text = h.total === 0 ? `${when}: no checks` : bad ? `${when}: ${bad} bad of ${h.total} minutes` : `${when}: all ${h.total} minutes good`;
+          block.setAttribute("aria-label", text);
+          block.addEventListener("pointerenter", () => {
+            const tip = $("u-tip"), r = block.getBoundingClientRect(), p = $("uptime-panel").getBoundingClientRect();
+            tip.textContent = text;
+            tip.hidden = false;
+            tip.style.left = `${Math.min(Math.max(r.left - p.left + r.width / 2, 110), p.width - 110)}px`;
+            tip.style.top = `${r.top - p.top}px`;
+          });
+          block.addEventListener("pointerleave", () => { $("u-tip").hidden = true; });
+          strip.appendChild(block);
+        }
+
+        const box = $("u-incidents");
+        box.replaceChildren();
+        if (u.recentBadMinutes.length) {
+          box.appendChild(el("div", { class: "muted", style: "margin-top:12px" }, "Recent bad minutes"));
+          const list = el("ul", { class: "incidents" });
+          for (const b of u.recentBadMinutes) list.appendChild(el("li", {}, `${new Date(b.at).toLocaleString()} · ${b.reason}`));
+          box.appendChild(list);
+        }
+      }
+
+      async function loadUptime() {
+        if (!UPTIME_API) return;
+        try {
+          renderUptime(await (await fetch(UPTIME_API)).json());
+        } catch {
+          $("u-note").textContent = "The outside uptime checker can't be reached right now.";
+        }
+      }
+      loadUptime();
+      setInterval(loadUptime, 60_000);
+
+      async function load() {
+        try {
+          render(await (await fetch("/api/status", { cache: "no-store" })).json());
+        } catch {
+          $("updated").textContent = "Can't reach the server. Retrying...";
+        }
+      }
+      load();
+      setInterval(load, 5000);
+      addEventListener("resize", () => last && renderCharts(last.slos));
+    })();
+  </script>
+</body>
+</html>

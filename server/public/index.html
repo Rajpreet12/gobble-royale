@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Gobble Royale</title>
+  <meta name="description" content="Every turkey online. One field. The Chef is coming. Be the last bird standing and win it for your state." />
+  <meta property="og:title" content="Gobble Royale 🦃" />
+  <meta property="og:description" content="A live multiplayer turkey battle royale. Win it for your state." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🦃</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@400;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #2b1a0e;
+      --panel: #3a2414;
+      --edge: #5a3a20;
+      --text: #fff3e0;
+      --muted: #d1b393;
+      --pumpkin: #ff8a2a;
+      --gold: #ffc94a;
+      --cranberry: #e0435a;
+      --grass: #8bc34a;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; }
+    body {
+      background: radial-gradient(ellipse at 50% -20%, #5a3417 0%, var(--bg) 60%) fixed, var(--bg);
+      color: var(--text); font-family: "Nunito", system-ui, sans-serif; font-size: 17px; line-height: 1.5;
+      min-height: 100vh; overflow-x: hidden;
+    }
+    main { max-width: 1100px; margin: 0 auto; padding: 14px 16px 48px; }
+    .display { font-family: "Lilita One", "Nunito", sans-serif; font-weight: 400; letter-spacing: .5px; }
+
+    .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+    .brand { font-size: clamp(1.5rem, 5vw, 2.2rem); color: var(--pumpkin); text-shadow: 2px 2px 0 #000; margin: 0; }
+    .online { font-weight: 800; color: var(--muted); font-size: .9rem; white-space: nowrap; }
+    .online .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #6fdc5a; margin-right: 6px; box-shadow: 0 0 8px #6fdc5a; animation: pulse 1.6s infinite; }
+    @keyframes pulse { 50% { opacity: .4; } }
+    .iconbtn { font: inherit; cursor: pointer; background: var(--panel); color: var(--text); border: 2px solid var(--edge); border-radius: 999px; padding: 4px 10px; }
+
+    /* The field */
+    .stage { position: relative; border-radius: 16px; overflow: hidden; border: 4px solid #8d5a2b; box-shadow: 0 16px 40px rgba(0,0,0,.5); background: var(--grass); touch-action: none; user-select: none; -webkit-user-select: none; }
+    canvas { display: block; width: 100%; height: auto; }
+    .hud { position: absolute; inset: 0; pointer-events: none; }
+    .status { position: absolute; top: 10px; left: 10px; background: rgba(43, 26, 14, .82); border-radius: 12px; padding: 6px 12px; font-weight: 800; font-size: clamp(.8rem, 2.4vw, 1rem); }
+    .feed { position: absolute; top: 10px; right: 10px; display: grid; gap: 4px; justify-items: end; max-width: 46%; }
+    .feed div { background: rgba(43, 26, 14, .78); border-radius: 10px; padding: 2px 10px; font-size: clamp(.7rem, 2vw, .85rem); font-weight: 700; animation: slide .3s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+    .feed .mine { background: rgba(224, 67, 90, .9); }
+    @keyframes slide { from { transform: translateX(20px); opacity: 0; } }
+    .banner { position: absolute; left: 0; right: 0; top: 38%; text-align: center; font-size: clamp(2rem, 8vw, 4.6rem); color: var(--gold); text-shadow: 3px 3px 0 #000, 0 0 30px rgba(0,0,0,.5); opacity: 0; transform: scale(.8); transition: opacity .25s, transform .25s; padding: 0 12px; line-height: 1.05; }
+    .banner.on { opacity: 1; transform: scale(1); }
+    .banner small { display: block; font-family: "Nunito", sans-serif; font-weight: 800; font-size: clamp(.9rem, 2.6vw, 1.3rem); color: var(--text); margin-top: 8px; }
+    .watching { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(43, 26, 14, .85); border-radius: 999px; padding: 4px 14px; font-weight: 800; font-size: .9rem; white-space: nowrap; }
+    .dash {
+      position: absolute; right: 14px; bottom: 14px; width: 84px; height: 84px; border-radius: 50%; pointer-events: auto;
+      border: 4px solid #fff; color: #fff; font-family: "Lilita One", sans-serif; font-size: 1.1rem; cursor: pointer;
+      background: conic-gradient(var(--pumpkin) calc(var(--ready, 1) * 360deg), rgba(0,0,0,.45) 0);
+      box-shadow: 0 6px 16px rgba(0,0,0,.4); touch-action: none;
+    }
+    .dash .key { display: block; font-family: "Nunito", sans-serif; font-weight: 800; font-size: .65rem; opacity: .85; }
+
+    /* Overlays on the field */
+    /* Fixed to the whole screen, so the card always has room and scrolls normally on small phones */
+    .overlay { position: fixed; inset: 0; z-index: 50; display: flex; background: rgba(30, 18, 8, .78); padding: 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    #result { background: rgba(30, 18, 8, .5); }
+    .card { margin: auto; background: var(--panel); border: 3px solid var(--edge); border-radius: 20px; padding: 20px; width: min(440px, 100%); text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+    .card h1 { font-size: clamp(2.2rem, 8vw, 3.2rem); color: var(--pumpkin); margin: 0; line-height: 1; text-shadow: 3px 3px 0 #000; }
+    .card .tag { color: var(--muted); font-weight: 700; margin: 8px 0 16px; }
+    .name-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px; }
+    .name { font-family: "Lilita One", sans-serif; font-size: 1.5rem; color: var(--gold); }
+    .reroll { font: inherit; font-size: 1.3rem; cursor: pointer; background: transparent; border: 2px solid var(--edge); border-radius: 12px; padding: 2px 8px; color: var(--text); }
+    .reroll:hover { border-color: var(--gold); }
+    .lbl { display: block; text-align: left; font-weight: 800; color: var(--muted); font-size: .85rem; margin-bottom: 4px; }
+    /* The state picker: a button that opens a searchable list (a native dropdown misbehaves in some in-app browsers) */
+    .picker {
+      width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer;
+      font: inherit; text-align: left; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--edge); background: #24160b; color: var(--text);
+    }
+    .picker:hover, .picker[aria-expanded=true] { border-color: var(--gold); }
+    .states { margin-top: 6px; border: 2px solid var(--edge); border-radius: 12px; background: #24160b; padding: 8px; text-align: left; }
+    .states input { width: 100%; font: inherit; padding: 8px 10px; border-radius: 8px; border: 2px solid var(--edge); background: #1a0f07; color: var(--text); outline: none; }
+    .states input:focus { border-color: var(--gold); }
+    .state-list { max-height: 220px; overflow-y: auto; margin-top: 6px; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; overscroll-behavior: contain; }
+    .state-list button { font: inherit; font-size: .9rem; text-align: left; cursor: pointer; padding: 7px 10px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--text); }
+    .state-list button:hover, .state-list button:focus-visible { background: #3a2414; border-color: var(--edge); outline: none; }
+    .state-list button[aria-selected=true] { background: var(--gold); color: #2b1a0e; font-weight: 800; }
+    .state-list .none { color: var(--muted); font-style: italic; padding: 6px 10px; }
+    .play {
+      display: block; width: 100%; margin-top: 16px; padding: 12px; cursor: pointer; font-family: "Lilita One", sans-serif; font-size: 1.7rem; letter-spacing: 1px;
+      color: #2b1a0e; background: linear-gradient(180deg, #ffd26a, var(--gold)); border: none; border-radius: 16px; box-shadow: 0 6px 0 #b8861e;
+    }
+    .play:active { transform: translateY(4px); box-shadow: 0 2px 0 #b8861e; }
+    .play:disabled { filter: grayscale(.6); cursor: wait; }
+    .how { color: var(--muted); font-size: .85rem; margin: 14px 0 0; text-align: left; }
+    .how b { color: var(--text); }
+    .err { color: #ff9aa8; font-weight: 800; min-height: 1.4em; margin: 10px 0 0; font-size: .9rem; }
+
+    .result h2 { font-size: clamp(1.9rem, 7vw, 2.6rem); margin: 0; line-height: 1.05; }
+    .result.won h2 { color: var(--gold); }
+    .result.lost h2 { color: var(--cranberry); }
+    .result .big { font-size: 3.4rem; line-height: 1.1; }
+    .result p { margin: 8px 0 0; font-weight: 700; }
+    .result .row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+    .btn { font: inherit; font-weight: 800; cursor: pointer; padding: 9px 16px; border-radius: 999px; color: var(--text); background: transparent; border: 2px solid var(--edge); }
+    .btn.primary { background: var(--pumpkin); border-color: var(--pumpkin); color: #2b1a0e; }
+    .btn:hover { border-color: var(--gold); }
+
+    /* Below the field */
+    .below { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-top: 18px; }
+    .panel { background: var(--panel); border: 2px solid var(--edge); border-radius: 16px; padding: 16px; }
+    .panel h2 { margin: 0 0 4px; color: var(--pumpkin); font-size: 1.6rem; }
+    .panel .sub { color: var(--muted); margin: 0 0 10px; font-size: .9rem; font-weight: 700; }
+    .totals { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
+    .total { background: #24160b; border-radius: 12px; padding: 8px 4px; text-align: center; }
+    .total .num { display: block; font-family: "Lilita One", sans-serif; font-size: 1.6rem; color: var(--gold); line-height: 1.1; }
+    .total .label { font-size: .75rem; color: var(--muted); font-weight: 700; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { padding: 6px 4px; text-align: left; border-bottom: 1px solid var(--edge); }
+    th { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: 1px; }
+    td.n, th.n { text-align: right; }
+    td.rank { font-family: "Lilita One", sans-serif; color: var(--cranberry); width: 2em; }
+    tr.mine td { color: var(--gold); font-weight: 800; }
+    .empty { color: var(--muted); font-style: italic; }
+    .panel ul { margin: 0; padding-left: 20px; }
+    .panel li + li { margin-top: 6px; }
+    footer { text-align: center; color: var(--muted); font-size: .85rem; margin-top: 28px; }
+
+    @media (max-width: 760px) {
+      .below { grid-template-columns: 1fr; }
+      .dash { width: 70px; height: 70px; right: 10px; bottom: 10px; }
+    }
+    @media (hover: hover) and (pointer: fine) {
+      .dash { width: 70px; height: 70px; }
+    }
+    .rotate { display: none; text-align: center; color: var(--muted); font-weight: 800; font-size: .85rem; margin: 8px 0 0; }
+    @media (max-width: 520px) {
+      .brand { font-size: 1.35rem; white-space: nowrap; }
+      .dash { width: 56px; height: 56px; font-size: .85rem; right: 8px; bottom: 8px; border-width: 3px; }
+      .dash .key { display: none; }
+      .status { top: 6px; left: 6px; padding: 3px 8px; }
+      .feed { top: 6px; right: 6px; }
+      .watching { left: 8px; bottom: 8px; transform: none; font-size: .72rem; max-width: calc(100% - 80px); white-space: normal; }
+    }
+    @media (max-width: 520px) and (orientation: portrait) {
+      .rotate { display: block; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topbar">
+      <h1 class="brand display">🦃 Gobble Royale</h1>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span class="online" id="ping-wrap" hidden>📶 <span id="ping">–</span> ms</span>
+        <span class="online"><span class="dot"></span><span id="online">–</span> playing now</span>
+        <button class="iconbtn" id="mute" type="button" aria-label="Sound on">🔊</button>
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <canvas id="field" width="1600" height="1000" aria-label="The field"></canvas>
+      <div class="hud">
+        <div class="status" id="status">Warming up the oven...</div>
+        <div class="feed" id="feed"></div>
+        <div class="banner display" id="banner"></div>
+        <div class="watching" id="watching" hidden>👻 You're watching. You're in the next round.</div>
+        <button class="dash" id="dash" type="button" hidden>FLAP<span class="key">SPACE</span></button>
+      </div>
+    </div>
+
+    <!-- Full-screen popups live outside the field: the field turns off touch scrolling and text
+         selection for the joystick, which would otherwise break the dropdown on phones. -->
+      <div class="overlay" id="join">
+        <div class="card">
+          <h1 class="display">Gobble Royale</h1>
+          <p class="tag">Every turkey online. One field. The Chef is coming.<br />Be the last bird standing and win it for your state.</p>
+          <div class="name-row">
+            <span class="name" id="name">...</span>
+            <button class="reroll" id="reroll" type="button" title="New name" aria-label="Pick a new name">🎲</button>
+          </div>
+          <span class="lbl" id="state-label">Playing for</span>
+          <button class="picker" id="state-btn" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="state-label state-btn">
+            <span id="state-name">Pick your state...</span><span aria-hidden="true">▾</span>
+          </button>
+          <div class="states" id="state-panel" hidden>
+            <input type="search" id="state-search" placeholder="Type to search, e.g. Texas" autocomplete="off" aria-label="Search states" />
+            <div class="state-list" id="state-list" role="listbox" aria-labelledby="state-label"></div>
+          </div>
+          <button class="play" id="play" type="button">Waddle in</button>
+          <p class="err" id="join-err" role="alert"></p>
+          <p class="how">
+            <b>Move:</b> WASD or arrow keys, or hold the mouse where you want to go. On a phone, drag anywhere.<br />
+            <b>Flap:</b> Space or the FLAP button for a quick burst of speed.<br />
+            <b>Survive:</b> dodge the 👨‍🍳 Chef, hide behind hay bales, and stay out of the 🔥 oven as it closes in.
+          </p>
+        </div>
+      </div>
+
+      <div class="overlay" id="result" hidden>
+        <div class="card result" id="result-card">
+          <div class="big" id="result-emoji"></div>
+          <h2 class="display" id="result-title"></h2>
+          <p id="result-line"></p>
+          <div class="row">
+            <button class="btn primary" id="brag" type="button">📤 Brag about it</button>
+            <button class="btn" id="close-result" type="button">🦃 Keep playing</button>
+          </div>
+        </div>
+      </div>
+
+    <p class="rotate">📱 Turn your phone sideways for a bigger field</p>
+
+    <div class="below">
+      <section class="panel">
+        <h2 class="display">🏆 States at war</h2>
+        <p class="sub">Every round won counts for your state. Who rules the roost?</p>
+        <div class="totals">
+          <div class="total"><span class="num" id="t-stuffed">–</span><span class="label">🍗 turkeys stuffed</span></div>
+          <div class="total"><span class="num" id="t-rounds">–</span><span class="label">🎮 rounds played</span></div>
+          <div class="total"><span class="num" id="t-online">–</span><span class="label">🟢 playing now</span></div>
+        </div>
+        <table>
+          <thead><tr><th></th><th>State</th><th class="n">Wins</th><th class="n">Rounds</th></tr></thead>
+          <tbody id="board"><tr><td colspan="4" class="empty">Counting feathers...</td></tr></tbody>
+        </table>
+      </section>
+      <section class="panel">
+        <h2 class="display">How to win</h2>
+        <ul>
+          <li>👨‍🍳 <b>The Chef</b> chases the nearest turkey. More Chefs arrive as the round goes on, and they get faster.</li>
+          <li>🔥 <b>The oven</b> closes in. Stay inside the ring; a turkey left outside too long gets roasted.</li>
+          <li>🌾 <b>Hay bales</b> block the Chef. Run circles around them.</li>
+          <li>🪶 <b>Flap</b> to escape at the last second. It needs a moment to recharge.</li>
+          <li>🤖 Not many people online? Bot turkeys fill the field so every round is a battle.</li>
+        </ul>
+      </section>
+    </div>
+
+    <footer>
+      Running live on one Amazon Lightsail server · <a href="/status" style="color:var(--pumpkin)">Live status</a> · Built for the AWS community<br />
+      Happy Thanksgiving from the AWS community 🦃
+    </footer>
+  </main>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# Copy to samconfig.toml (which git ignores) and put in the address that should get alerts.
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "gobble-royale-uptime"
+resolve_s3 = true
+s3_prefix = "gobble-royale-uptime"
+region = "us-east-1"
+confirm_changeset = false
+capabilities = "CAPABILITY_IAM"
+tags = "project=\"gobble-royale\""
+parameter_overrides = "AlertEmail=\"you@example.com\""
+
+[default.global.parameters]
+region = "us-east-1"

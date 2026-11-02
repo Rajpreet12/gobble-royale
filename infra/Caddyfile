@@ -1,0 +1,21 @@
+# Caddy in front of the game: HTTPS with a free Let's Encrypt certificate, WebSockets passed through.
+# Installed to /etc/caddy/Caddyfile by infra/lightsail-setup.sh (which fills in the host name).
+__HOST__ {
+	encode gzip
+	reverse_proxy 127.0.0.1:8080
+
+	# Game day 2026-11-02: when the game was down, players got a blank 502. Caddy now answers
+	# by itself with a friendly page that retries every 10 seconds. It still returns 503, so the
+	# uptime checker (and anything else) correctly sees the game as down.
+	# (Backtick quotes, not a <<heredoc: Ubuntu 24.04 ships Caddy 2.6, which has no heredocs.)
+	handle_errors {
+		header Content-Type "text/html; charset=utf-8"
+		header Cache-Control "no-store"
+		header Retry-After "10"
+		respond `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="10"><title>Gobble Royale is restarting</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#2b1a0e;color:#fff3e0;font-family:system-ui,sans-serif;text-align:center;padding:16px}h1{color:#ff8a2a;margin:.2em 0}p{color:#d1b393}</style></head>
+<body><div><div style="font-size:64px">🦃</div><h1>The farm is restarting</h1><p>The turkeys will be back in a moment. This page tries again every 10 seconds.</p></div></body></html>` 503
+	}
+}
