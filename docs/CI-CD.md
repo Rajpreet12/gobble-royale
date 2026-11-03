@@ -53,7 +53,8 @@ If any of that fails, [`scripts/deploy-lightsail-ci.sh`](../scripts/deploy-light
 ## Security
 
 - **No AWS keys in GitHub.** GitHub proves who it is with an OIDC token; AWS gives back credentials that last at most an hour.
-- **Only `main` can deploy** ([`infra/github-deploy-role.yaml`](../infra/github-deploy-role.yaml)): the role trusts `repo:Rajpreet12/gobble-royale:ref:refs/heads/main` and nothing else. A pull request from a fork can run CI but can never get credentials.
+- **Only `main` can deploy** ([`infra/github-deploy-role.yaml`](../infra/github-deploy-role.yaml)): the role trusts `repo:Rajpreet12@147854707/gobble-royale@1443637910:ref:refs/heads/main` and nothing else. GitHub's tokens name the repo with **permanent numeric IDs**, so a repo re-created under the same name by someone else can't inherit the access. (The first deploy failed because the trust used the older name-only form; CloudTrail's `AssumeRoleWithWebIdentity` event showed the exact subject GitHub sent.)
+- **Changing a role parameter needs `--parameter-overrides`.** `aws cloudformation deploy` keeps a stack's previous parameter values, even when the template's default changes. A pull request from a fork can run CI but can never get credentials.
 - **Least privilege:** five Lightsail actions on one instance. That's still powerful (an SSH certificate there means sudo), which is why the branch rule matters.
 - **SSH is open only to the runner, only during the deploy.** The firewall is restored by a `trap`, even if the deploy fails halfway.
 - **The server's host key is pinned** from Lightsail's API, so the connection can't be intercepted.

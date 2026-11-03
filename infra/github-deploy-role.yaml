@@ -4,10 +4,14 @@ Description: >-
   ever stored in GitHub. Only the main branch of one repository can use it, only on one server.
 
 Parameters:
+  # GitHub's token names the repository with permanent numeric IDs (owner@id/repo@id). If the repo
+  # were ever deleted or renamed, someone else could create one with the same NAME, but never the
+  # same IDs, so they couldn't inherit this access. Found on the first deploy, in CloudTrail: the
+  # name-only form (repo:Rajpreet12/gobble-royale:...) was rejected with AccessDenied.
   Repository:
     Type: String
-    Default: Rajpreet12/gobble-royale
-    Description: owner/name of the GitHub repository allowed to deploy
+    Default: Rajpreet12@147854707/gobble-royale@1443637910
+    Description: The repository as GitHub's OIDC token names it (owner@ownerId/name@repoId)
   InstanceArn:
     Type: String
     Default: arn:aws:lightsail:us-east-1:903584666644:Instance/53689a80-deb5-4fd5-99c4-5e0be1a359fe
