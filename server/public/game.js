@@ -130,23 +130,66 @@
     connect();
   });
 
+  // Staying connected. Found 2026-11-03: a deploy restarted the server and a player's page didn't
+  // notice. Their own turkey kept moving (it's predicted locally), so it looked like they were
+  // playing while the server saw nobody. Now a silent connection is detected, and a dropped one
+  // (a deploy, a Wi-Fi blip) rejoins by itself.
+  const SILENCE_MS = 3_000; // snapshots arrive 15 times a second; 3 s of nothing means it's gone
+  const MAX_RECONNECTS = 12; // about 2 minutes of trying, then back to the join screen
+  let reconnects = 0;
+  let reconnectTimer = null;
+  let lastMessageAt = 0;
+
   function connect() {
+    clearTimeout(reconnectTimer);
     $("play").disabled = true;
     $("join-err").textContent = "";
-    ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/play`);
-    ws.onopen = () => ws.send(JSON.stringify({ t: "hello", name: profile.name, state: profile.state }));
-    ws.onmessage = (e) => handle(JSON.parse(e.data));
-    ws.onclose = (e) => {
-      $("play").disabled = false;
-      myId = null;
-      me.alive = false;
-      $("dash").hidden = true;
-      $("watching").hidden = true;
-      $("ping-wrap").hidden = true;
-      $("join").hidden = false;
-      $("join-err").textContent = e.reason || (e.code === 1006 ? "Lost the connection to the farm. Try again." : "");
+    const sock = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/play`);
+    ws = sock;
+    lastMessageAt = performance.now();
+    sock.onopen = () => sock.send(JSON.stringify({ t: "hello", name: profile.name, state: profile.state }));
+    sock.onmessage = (e) => {
+      if (sock !== ws) return; // a connection we already gave up on
+      lastMessageAt = performance.now();
+      handle(JSON.parse(e.data));
     };
+    sock.onclose = (e) => { if (sock === ws) dropped(e.code, e.reason); };
   }
+
+  function dropped(code, reason) {
+    const wasPlaying = myId !== null || reconnects > 0;
+    ws = null;
+    myId = null;
+    me.alive = false;
+    snaps.length = 0;
+    $("dash").hidden = true;
+    $("watching").hidden = true;
+    $("ping-wrap").hidden = true;
+    // 4000/4001: the server refused us (bad name or state); trying again won't help.
+    const refused = code === 4000 || code === 4001;
+    if (wasPlaying && !refused && reconnects < MAX_RECONNECTS) {
+      // Wait 1 s, 2 s, 4 s... up to 10 s, with jitter, so that after a deploy everyone doesn't
+      // hit the restarting server in the same instant (the "thundering herd").
+      const wait = Math.min(10_000, 1_000 * 2 ** reconnects) * (0.75 + Math.random() * 0.5);
+      reconnects++;
+      $("status").textContent = `📡 Reconnecting... (try ${reconnects})`;
+      banner("Reconnecting...", reason || "Lost the connection. Getting you back in.", wait + 500);
+      reconnectTimer = setTimeout(connect, wait);
+      return;
+    }
+    reconnects = 0;
+    $("play").disabled = false;
+    $("join").hidden = false;
+    $("join-err").textContent = reason || (code === 1006 ? "Lost the connection to the farm. Try again." : "");
+  }
+
+  setInterval(() => {
+    if (ws && myId !== null && performance.now() - lastMessageAt > SILENCE_MS) {
+      const dead = ws;
+      dropped(1006, "The connection went quiet.");
+      dead.close();
+    }
+  }, 1_000);
 
   // ---------- Messages from the server ----------
 
@@ -158,6 +201,8 @@
         obstacles = msg.obstacles;
         $("join").hidden = true;
         $("dash").hidden = false;
+        if (reconnects > 0) banner("Back in! 🦃", "", 1200);
+        reconnects = 0;
         break;
       case "meta":
         meta = new Map(msg.m.map(([id, name, state, hue, bot]) => [id, { name, state, hue, bot: !!bot }]));
