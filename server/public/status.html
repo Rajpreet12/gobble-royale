@@ -66,6 +66,12 @@
     .chart .why { color: var(--muted); font-size: .82rem; margin: 6px 0 0; }
     .tip { position: absolute; pointer-events: none; background: #120a04; border: 1px solid var(--edge); border-radius: 8px; padding: 4px 8px; font-size: .8rem; font-weight: 700; white-space: nowrap; transform: translate(-50%, -110%); }
 
+    /* The last real session, shown when nobody is playing */
+    #last-session { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--edge); }
+    .ls-head { font-weight: 700; color: var(--muted); font-size: .9rem; margin-bottom: 6px; }
+    .ls-table td { text-align: left; padding: 6px 8px 6px 0; }
+    .ls-table td:last-child { text-align: right; }
+
     /* Availability and error budget */
     .avail { display: grid; grid-template-columns: 1.1fr 1.4fr 1fr; gap: 14px; align-items: start; }
     .hero { font-size: 2.6rem; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
@@ -110,6 +116,7 @@
 
     <section class="panel">
       <div class="overall" id="overall"><span class="icon">⏳</span><span>Checking...</span></div>
+      <div id="last-session" hidden></div>
     </section>
 
     <section class="panel" id="uptime-panel">
@@ -211,6 +218,32 @@
         return span;
       }
 
+      const ago = (t) => {
+        const m = Math.round((Date.now() - t) / 60_000);
+        return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 48 * 60 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+      };
+
+      // The last real session: the same measurements the live page showed, kept with their date.
+      function renderLastSession(L) {
+        const box = $("last-session");
+        box.replaceChildren();
+        box.hidden = !L;
+        if (!L) return;
+        const mins = Math.max(1, Math.round((L.endedAt - L.startedAt) / 60_000));
+        const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+        box.appendChild(el("div", { class: "ls-head" }, `Last session: ${new Date(L.startedAt).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} (${ago(L.endedAt)}) · ${plural(L.peakPlayers, "player")} · ${plural(L.rounds, "round")} · ${plural(mins, "minute")}`));
+        const table = el("table", { class: "ls-table" });
+        for (const x of L.slos) {
+          const tr = document.createElement("tr");
+          tr.append(el("td", {}, x.name), el("td", {}, `${x.percentile} ${fmtMs(x.value)}`), el("td", { class: "muted" }, `target < ${x.targetMs} ms`));
+          const st = document.createElement("td");
+          st.appendChild(statusPill(x.met));
+          tr.appendChild(st);
+          table.appendChild(tr);
+        }
+        box.appendChild(table);
+      }
+
       function render(s) {
         last = s;
         $("updated").textContent = `Updated ${new Date(s.now).toLocaleTimeString()}`;
@@ -232,9 +265,11 @@
         const overall = $("overall");
         overall.replaceChildren();
         const [icon, title, sub] = noData
-          ? s.slos.some((x) => x.samples > 0)
+          ? s.slos.some((x) => x.samples > 0) && !(s.online === 0 && s.lastSession)
             ? ["⏸", "Not enough data yet", `Each SLO needs at least ${s.slos[0].minSamples} samples in the last 5 minutes before it's judged. Keep playing for a minute.`]
-            : ["⏸", "No data yet", "Nobody has played in the last 5 minutes, so there's nothing to measure. Join a game and come back."]
+            : s.lastSession
+              ? ["⏸", "Nobody's playing right now", "Here's how the last real session went. Live numbers come back as soon as someone joins."]
+              : ["⏸", "No data yet", "Nobody has played in the last 5 minutes, so there's nothing to measure. Join a game and come back."]
           : missing.length
             ? ["❌", `${missing.length} SLO${missing.length > 1 ? "s" : ""} missing: ${missing.map((m) => m.name).join(", ")}`, "Players are feeling it. Check the charts below for when it started."]
             : ["✅", "All SLOs met", `${s.online} player${s.online === 1 ? "" : "s"} online. The game is fast and smooth.`];
@@ -244,6 +279,7 @@
         small.textContent = sub;
         text.appendChild(small);
         overall.append(el("span", { class: "icon" }, icon), text);
+        renderLastSession(noData ? s.lastSession : null);
 
         const rows = $("slo-rows");
         rows.replaceChildren();

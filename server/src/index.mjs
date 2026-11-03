@@ -19,6 +19,7 @@ import { MAX_HUMANS, Room, TICK_HZ } from "./game.mjs";
 import { counter, exportWindows, gauge, importWindows, renderPrometheus } from "./metrics.mjs";
 import { ADJECTIVES, NOUNS, STATES, isName, isState } from "./names.mjs";
 import { leaderboard, loadScores, saveFile, syncScores } from "./scores.mjs";
+import { SessionTracker } from "./session.mjs";
 import { exportHistory, httpDuration, importHistory, rtt, sloReport, startHistory, tickDuration, tickLag } from "./slo.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
@@ -41,6 +42,10 @@ const connections = counter("gobble_connections_total", "WebSocket connections o
 const joins = counter("gobble_joins_total", "Players who joined an arena");
 const received = counter("gobble_messages_received_total", "Messages received from players");
 const dropped = counter("gobble_messages_dropped_total", "Messages dropped by the rate limit", { reason: "rate_limit" });
+const roundsTotal = counter("gobble_rounds_total", "Rounds started"); // the same counter game.mjs ticks
+
+// The last real play session, shown on /status when nobody is playing (see session.mjs)
+let sessions = new SessionTracker();
 const rejectedIp = counter("gobble_connections_rejected_total", "Connections refused", { reason: "ip_limit" });
 const rejectedPath = counter("gobble_connections_rejected_total", "Connections refused", { reason: "bad_path" });
 
@@ -100,6 +105,7 @@ function status() {
     eventLoopBusy: Math.round(busy * 1000) / 10,
     totals: { connections: connections.value, joins: joins.value, rateLimited: dropped.value, rejected: rejectedIp.value + rejectedPath.value },
     slos: sloReport(),
+    lastSession: sessions.last,
   };
   statusCache = { at: Date.now(), body };
   return body;
@@ -248,7 +254,7 @@ const METRICS_FILE = process.env.METRICS_FILE || (process.env.SCORES_FILE ? join
 function saveMetrics() {
   if (!METRICS_FILE) return;
   try {
-    writeFileSync(`${METRICS_FILE}.tmp`, JSON.stringify({ savedAt: Date.now(), windows: exportWindows(), history: exportHistory() }));
+    writeFileSync(`${METRICS_FILE}.tmp`, JSON.stringify({ savedAt: Date.now(), windows: exportWindows(), history: exportHistory(), lastSession: sessions.toJSON() }));
     renameSync(`${METRICS_FILE}.tmp`, METRICS_FILE);
   } catch (err) {
     console.warn("Metrics not saved", err.code);
@@ -261,6 +267,7 @@ function loadMetrics() {
     const saved = JSON.parse(readFileSync(METRICS_FILE, "utf8"));
     importWindows(saved.windows);
     importHistory(saved.history);
+    sessions = new SessionTracker(saved.lastSession);
     console.log(`Metrics restored from ${Math.round((Date.now() - saved.savedAt) / 1000)} s ago`);
   } catch (err) {
     if (err.code !== "ENOENT") console.warn("Starting with empty metrics", err.message);
@@ -269,6 +276,7 @@ function loadMetrics() {
 
 loadMetrics();
 setInterval(saveMetrics, 60_000).unref();
+setInterval(() => sessions.update(Date.now(), online(), roundsTotal.value, sloReport()), 5_000).unref();
 await loadScores().catch((err) => console.warn("Starting with an empty leaderboard", err.name));
 syncScores();
 startHistory();
