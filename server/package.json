@@ -6,7 +6,7 @@
   "main": "src/index.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test test/game.test.mjs test/metrics.test.mjs",
+    "test": "node --test test/game.test.mjs test/metrics.test.mjs test/slo.test.mjs",
     "loadtest": "node scripts/loadtest.mjs"
   },
   "engines": {

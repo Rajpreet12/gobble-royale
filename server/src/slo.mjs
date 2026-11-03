@@ -72,6 +72,20 @@ export function startHistory() {
   }, HISTORY_EVERY_MS).unref();
 }
 
+// Saved on shutdown and loaded on start (see index.mjs), so a deploy doesn't wipe the charts.
+export const exportHistory = () => Object.fromEntries(history);
+export function importHistory(saved) {
+  const oldest = Date.now() - HISTORY_POINTS * HISTORY_EVERY_MS;
+  for (const [id, points] of Object.entries(saved ?? {})) {
+    if (history.has(id) && Array.isArray(points)) history.set(id, points.filter((p) => p.t >= oldest).slice(-HISTORY_POINTS));
+  }
+}
+
+// With very few samples a percentile is just one or two requests, and "p95" of a single slow first
+// page load says nothing about the service. Found 2026-11-03: one 119 ms request right after a
+// deploy marked the page SLO as missed. Below this many samples there's no verdict either way.
+export const MIN_SAMPLES = 20;
+
 const round = (v) => (v == null ? null : Math.round(v * 100) / 100);
 
 export function sloReport() {
@@ -81,9 +95,9 @@ export function sloReport() {
     return {
       id: s.id, name: s.name, why: s.why, targetMs: s.targetMs,
       percentile: s.quantile === 0.99 ? "p99" : "p95",
-      samples: n, p50: round(p50), p95: round(p95), p99: round(p99),
-      // No samples (nobody playing) is "no data", not a pass: an SLO can't be met by silence.
-      met: n === 0 ? null : measured <= s.targetMs,
+      samples: n, minSamples: MIN_SAMPLES, p50: round(p50), p95: round(p95), p99: round(p99),
+      // Too few samples (nobody playing, or just restarted) is "no verdict", never a pass or a miss.
+      met: n < MIN_SAMPLES ? null : measured <= s.targetMs,
       history: history.get(s.id).map((p) => ({ t: p.t, v: round(p.v), n: p.n })),
     };
   });

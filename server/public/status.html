@@ -201,10 +201,13 @@
       };
       let last = null;
 
-      function statusPill(met) {
+      // slo (optional) lets "a few samples" read differently from "none at all"
+      function statusPill(met, slo) {
         const span = document.createElement("span");
         span.className = `pill ${met === null ? "none" : met ? "good" : "bad"}`;
-        span.textContent = met === null ? "⏸ No data" : met ? "✅ Meeting" : "❌ Missing";
+        const few = slo && slo.samples > 0 && slo.samples < slo.minSamples;
+        span.textContent = met === null ? (few ? `⏸ Needs ${slo.minSamples} samples` : "⏸ No data") : met ? "✅ Meeting" : "❌ Missing";
+        if (few) span.title = `Only ${slo.samples} so far: too few to judge a percentile fairly`;
         return span;
       }
 
@@ -229,7 +232,9 @@
         const overall = $("overall");
         overall.replaceChildren();
         const [icon, title, sub] = noData
-          ? ["⏸", "No data yet", "Nobody has played in the last 5 minutes, so there's nothing to measure. Join a game and come back."]
+          ? s.slos.some((x) => x.samples > 0)
+            ? ["⏸", "Not enough data yet", `Each SLO needs at least ${s.slos[0].minSamples} samples in the last 5 minutes before it's judged. Keep playing for a minute.`]
+            : ["⏸", "No data yet", "Nobody has played in the last 5 minutes, so there's nothing to measure. Join a game and come back."]
           : missing.length
             ? ["❌", `${missing.length} SLO${missing.length > 1 ? "s" : ""} missing: ${missing.map((m) => m.name).join(", ")}`, "Players are feeling it. Check the charts below for when it started."]
             : ["✅", "All SLOs met", `${s.online} player${s.online === 1 ? "" : "s"} online. The game is fast and smooth.`];
@@ -258,7 +263,7 @@
           }
           tr.appendChild(el("td", {}, x.samples.toLocaleString()));
           const st = document.createElement("td");
-          st.appendChild(statusPill(x.met));
+          st.appendChild(statusPill(x.met, x));
           tr.appendChild(st);
           rows.appendChild(tr);
         }

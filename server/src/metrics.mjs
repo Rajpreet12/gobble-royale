@@ -78,8 +78,37 @@ class Histogram {
 export function histogram(name, help, buckets, labels = {}) {
   const f = family(name, "histogram", help);
   const key = labelKey(labels);
-  if (!f.series.has(key)) f.series.set(key, new Histogram(buckets));
+  if (!f.series.has(key)) {
+    const h = new Histogram(buckets);
+    h.labels = labels;
+    f.series.set(key, h);
+  }
   return f.series.get(key);
+}
+
+// The rolling windows behind /status, so a restart (every deploy) doesn't wipe the last 5 minutes.
+// Found 2026-11-03: a deploy emptied the status page right after someone had been playing.
+// Counters and Prometheus buckets are NOT saved: monitoring tools expect those to reset when a
+// process restarts, and they handle it. Only the windows /status reads from are carried over.
+export function exportWindows() {
+  const out = [];
+  for (const [name, f] of families) {
+    if (f.type !== "histogram") continue;
+    for (const h of f.series.values()) {
+      if (h.slices.length) out.push({ name, help: f.help, buckets: h.buckets, labels: h.labels ?? {}, slices: h.slices });
+    }
+  }
+  return out;
+}
+
+export function importWindows(saved) {
+  const from = Date.now() - WINDOW_MS;
+  for (const s of saved ?? []) {
+    if (!s?.name || !Array.isArray(s.buckets) || !Array.isArray(s.slices)) continue;
+    const h = histogram(s.name, s.help ?? "", s.buckets, s.labels ?? {});
+    const fresh = s.slices.filter((x) => x.start >= from && Array.isArray(x.values));
+    h.slices = [...fresh, ...h.slices].sort((a, b) => a.start - b.start);
+  }
 }
 
 export function counter(name, help, labels = {}) {

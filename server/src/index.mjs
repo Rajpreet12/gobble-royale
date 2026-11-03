@@ -9,17 +9,17 @@
 //   WS   /play             { t: "hello", name, state } then { t: "in", x, y, d } and { t: "pong", n }
 
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { WebSocketServer } from "ws";
 import { MAX_HUMANS, Room, TICK_HZ } from "./game.mjs";
-import { counter, gauge, renderPrometheus } from "./metrics.mjs";
+import { counter, exportWindows, gauge, importWindows, renderPrometheus } from "./metrics.mjs";
 import { ADJECTIVES, NOUNS, STATES, isName, isState } from "./names.mjs";
 import { leaderboard, loadScores, saveFile, syncScores } from "./scores.mjs";
-import { httpDuration, rtt, sloReport, startHistory, tickDuration, tickLag } from "./slo.mjs";
+import { exportHistory, httpDuration, importHistory, rtt, sloReport, startHistory, tickDuration, tickLag } from "./slo.mjs";
 
 const PORT = Number(process.env.PORT) || 8080;
 // Raised only for local load tests, where every fake player shares one address.
@@ -241,15 +241,44 @@ setInterval(() => {
   }
 }, 20_000);
 
+// Metrics for /status survive a restart: saved next to the scores (so no server config change),
+// every minute in case of a crash and again on shutdown. Nothing is saved when running locally.
+const METRICS_FILE = process.env.METRICS_FILE || (process.env.SCORES_FILE ? join(dirname(process.env.SCORES_FILE), "metrics.json") : null);
+
+function saveMetrics() {
+  if (!METRICS_FILE) return;
+  try {
+    writeFileSync(`${METRICS_FILE}.tmp`, JSON.stringify({ savedAt: Date.now(), windows: exportWindows(), history: exportHistory() }));
+    renameSync(`${METRICS_FILE}.tmp`, METRICS_FILE);
+  } catch (err) {
+    console.warn("Metrics not saved", err.code);
+  }
+}
+
+function loadMetrics() {
+  if (!METRICS_FILE) return;
+  try {
+    const saved = JSON.parse(readFileSync(METRICS_FILE, "utf8"));
+    importWindows(saved.windows);
+    importHistory(saved.history);
+    console.log(`Metrics restored from ${Math.round((Date.now() - saved.savedAt) / 1000)} s ago`);
+  } catch (err) {
+    if (err.code !== "ENOENT") console.warn("Starting with empty metrics", err.message);
+  }
+}
+
+loadMetrics();
+setInterval(saveMetrics, 60_000).unref();
 await loadScores().catch((err) => console.warn("Starting with an empty leaderboard", err.name));
 syncScores();
 startHistory();
 // LISTEN_HOST=127.0.0.1 behind Caddy on Lightsail; unset (all interfaces) everywhere else.
 server.listen(PORT, process.env.LISTEN_HOST, () => console.log(`Gobble Royale on :${PORT}`));
 
-// systemd (or Fargate) sends SIGTERM before a restart: say goodbye and save the scores first.
+// systemd (or Fargate) sends SIGTERM before a restart: say goodbye, save scores and metrics first.
 process.on("SIGTERM", () => {
   for (const ws of wss.clients) ws.close(1012, "The farm is restarting. Rejoin in a moment.");
+  saveMetrics();
   saveFile().catch(() => {}).finally(() => server.close(() => process.exit(0)));
   setTimeout(() => process.exit(0), 5000).unref();
 });
