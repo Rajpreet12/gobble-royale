@@ -57,6 +57,8 @@ If any of that fails, [`scripts/deploy-lightsail-ci.sh`](../scripts/deploy-light
 - **Least privilege:** five Lightsail actions on one instance. That's still powerful (an SSH certificate there means sudo), which is why the branch rule matters.
 - **SSH is open only to the runner, only during the deploy.** The firewall is restored by a `trap`, even if the deploy fails halfway.
 - **The server's host key is pinned** from Lightsail's API, so the connection can't be intercepted.
+- **Only pushes to this repository deploy.** The deploy runs on `workflow_run`, which also fires when CI finishes on a pull request from a fork, and a fork's branch can be named `main`. The job checks `workflow_run.event == 'push'` and that the commit came from this repository. Without that, anyone could run their own script with our AWS role (a "pwn request"). Found when the repo turned out to be public.
+- **Tool versions are pinned** (ShellCheck, cfn-lint, Caddy), so CI and a laptop give the same answer. The first CI run failed on a script that passed locally, because the runner's older ShellCheck reports some checks under different codes.
 - **Inputs go through `env`**, never pasted into shell commands (`${{ inputs.reason }}` in a `run:` line would let anyone who can trigger the workflow run commands).
 
 ## Running it yourself

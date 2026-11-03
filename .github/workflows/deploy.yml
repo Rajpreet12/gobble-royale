@@ -34,8 +34,16 @@ env:
 
 jobs:
   deploy:
-    # Only after a green CI run (or by hand)
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Only after a green CI run from a PUSH to THIS repository (or by hand).
+    # Without the last two checks this would be a "pwn request": anyone can fork, name their branch
+    # main and open a pull request; its CI run fires workflow_run with head_branch "main", and this
+    # job would check out their commit and run their script with our AWS role.
+    if: >-
+      github.event_name == 'workflow_dispatch' || (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

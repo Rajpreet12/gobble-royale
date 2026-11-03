@@ -40,6 +40,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned, so CI and a laptop agree. The runner's own ShellCheck is older and reports some
+      # checks under different codes: the first CI run failed on code that passed locally.
+      - name: Install pinned lint tools
+        run: |
+          pip install --quiet --user shellcheck-py==0.11.0.1 cfn-lint==1.52.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"   # ahead of the runner's own /usr/bin/shellcheck
+      - name: Show which versions are used
+        run: |
+          command -v shellcheck && shellcheck --version | grep ^version
+          cfn-lint --version
+
       # Postmortem 2026-10-30: a bash-only line in a script Lightsail runs with sh broke the
       # first boot. `sh -n` doesn't catch that; ShellCheck in sh mode does.
       - name: ShellCheck the Lightsail setup script as plain sh
@@ -48,9 +59,7 @@ jobs:
         run: shellcheck update-lightsail.sh deploy.sh scripts/*.sh
 
       - name: Lint CloudFormation and SAM templates
-        run: |
-          pip install --quiet cfn-lint
-          cfn-lint uptime/template.yaml infra/template.yaml infra/github-deploy-role.yaml
+        run: cfn-lint uptime/template.yaml infra/template.yaml infra/github-deploy-role.yaml
 
       # Game day 2026-11-02: the first friendly-error-page config used syntax the server's Caddy
       # (2.6.2, from Ubuntu 24.04) doesn't support. Validate with the SAME version production runs.
