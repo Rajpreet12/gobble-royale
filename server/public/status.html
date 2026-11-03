@@ -105,7 +105,7 @@
   <main>
     <div class="top">
       <h1>📈 Gobble Royale status</h1>
-      <span class="updated" id="updated" role="status">Loading...</span>
+      <span class="updated"><span id="updated" role="status">Loading...</span> · <span id="version">version –</span></span>
     </div>
 
     <section class="panel">
@@ -211,6 +211,14 @@
       function render(s) {
         last = s;
         $("updated").textContent = `Updated ${new Date(s.now).toLocaleTimeString()}`;
+        // Which commit is live, linked to GitHub, so anyone can see exactly what code is running.
+        const v = $("version");
+        v.replaceChildren();
+        if (/^[0-9a-f]{40}$/.test(s.version ?? "")) {
+          v.append("version ", el("a", { href: `https://github.com/Rajpreet12/gobble-royale/commit/${s.version}` }, s.version.slice(0, 7)));
+        } else {
+          v.textContent = `version ${s.version ?? "unknown"}`;
+        }
         $("t-online").textContent = s.online;
         $("t-uptime").textContent = fmtUptime(s.uptimeSeconds);
         $("t-mem").textContent = `${s.memoryMb} MB`;
